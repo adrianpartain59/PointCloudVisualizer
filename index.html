@@ -12,6 +12,13 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   }
   #canvas { display: block; width: 100vw; height: 100vh; }
+  body.mobile-view {
+    --mobile-crop-x: max(0px, calc((100vw - 56.25vh) / 2));
+    --mobile-crop-y: max(0px, calc((100vh - 177.7778vw) / 2));
+  }
+  body.mobile-view #canvas {
+    clip-path: inset(var(--mobile-crop-y) var(--mobile-crop-x));
+  }
 
   #panel {
     position: fixed; top: 16px; right: 16px;
@@ -31,9 +38,17 @@
   #panel::-webkit-scrollbar-track { background: transparent; }
   #panel::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
 
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
   h1 {
     font-size: 13px; font-weight: 600;
-    margin-bottom: 12px; letter-spacing: 0.5px;
+    letter-spacing: 0.5px;
     color: #fff; text-transform: uppercase;
   }
 
@@ -109,6 +124,15 @@
   button:hover { background: #2a2a2e; border-color: #444; }
   button.primary { background: #fff; color: #000; border-color: #fff; }
   button.primary:hover { background: #ddd; }
+  #view-mode {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 74px;
+    padding: 4px 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
 
   .check {
     display: flex; align-items: center; gap: 6px;
@@ -141,7 +165,10 @@
 <button id="toggle-panel" title="Show panel">≡</button>
 
 <div id="panel">
-  <h1>Point Cloud Visualizer</h1>
+  <div class="panel-header">
+    <h1>Point Cloud Visualizer</h1>
+    <button id="view-mode" type="button" title="Toggle desktop/mobile crop">Desktop</button>
+  </div>
 
   <details open>
     <summary>Wave Surface</summary>
@@ -285,9 +312,11 @@
       <div class="ctrl" style="margin-top:8px"><label>Export Resolution</label>
         <select id="exportRes">
           <option value="1">Current (1×)</option>
-          <option value="2" selected>2× (Retina)</option>
+          <option value="2">2× (Retina)</option>
           <option value="3">3×</option>
           <option value="4">4K-ish (4×)</option>
+          <option value="6">High Quality (6×)</option>
+          <option value="8" selected>Ultra Quality (8×, slower)</option>
         </select>
       </div>
     </div>
@@ -303,6 +332,7 @@ const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const panel = document.getElementById('panel');
 const togglePanelBtn = document.getElementById('toggle-panel');
+const viewModeBtn = document.getElementById('view-mode');
 
 // ---------- Default parameters tuned to the example image ----------
 const DEFAULTS = {
@@ -392,6 +422,7 @@ let animTime = 0;
 let lastFrame = performance.now();
 let isPlaying = true;
 let dirty = true;
+let viewMode = 'desktop';
 
 // ---------- Hash / pseudo-random ----------
 function hash2(x, y, seed) {
@@ -565,18 +596,52 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 
+function getMobileCropRect(w, h) {
+  const phoneAspect = 9 / 16;
+  let cropW = h * phoneAspect;
+  let cropH = h;
+  if (cropW > w) {
+    cropW = w;
+    cropH = w / phoneAspect;
+  }
+  return {
+    x: Math.floor((w - cropW) / 2),
+    y: Math.floor((h - cropH) / 2),
+    w: Math.floor(cropW),
+    h: Math.floor(cropH),
+  };
+}
+
+function setViewMode(nextMode) {
+  viewMode = nextMode === 'mobile' ? 'mobile' : 'desktop';
+  document.body.classList.toggle('mobile-view', viewMode === 'mobile');
+  viewModeBtn.textContent = viewMode === 'mobile' ? 'Mobile' : 'Desktop';
+  viewModeBtn.classList.toggle('primary', viewMode === 'mobile');
+  dirty = true;
+}
+
 // ---------- Render ----------
-function render(targetCtx, w, h, scale) {
+function render(targetCtx, w, h, scale, vignetteRect, frameSize) {
   scale = scale || 1;
+  const frameW = frameSize ? frameSize.w : w;
+  const frameH = frameSize ? frameSize.h : h;
+  const outputScaleX = w / frameW;
+  const outputScaleY = h / frameH;
+  const outputScale = (outputScaleX + outputScaleY) / 2;
   const p = params;
 
   // Background
   targetCtx.fillStyle = p.bgColor;
   targetCtx.fillRect(0, 0, w, h);
 
-  const halfW = w / 2, halfH = h / 2;
+  const halfW = frameW / 2, halfH = frameH / 2;
   const cx = halfW + p.panX * halfW;
   const cy = halfH + p.panY * halfH;
+  const edgeRect = vignetteRect || { x: 0, y: 0, w: frameW, h: frameH };
+  const edgeHalfW = edgeRect.w / 2;
+  const edgeHalfH = edgeRect.h / 2;
+  const edgeCx = edgeRect.x + edgeHalfW;
+  const edgeCy = edgeRect.y + edgeHalfH;
 
   const cosT = Math.cos(p.tilt), sinT = Math.sin(p.tilt);
   const cosR = Math.cos(p.rotation), sinR = Math.sin(p.rotation);
@@ -586,7 +651,7 @@ function render(targetCtx, w, h, scale) {
 
   // Grid extends well beyond the viewport so rotation + tilt still fill the frame.
   // Diagonal × generous factor.
-  const diag = Math.hypot(w, h);
+  const diag = Math.hypot(frameW, frameH);
   const baseExtent = diag * 1.6 / p.zoom;
   const stepCount = Math.max(10, Math.floor(p.density));
   const stepSize = baseExtent / stepCount;
@@ -651,7 +716,7 @@ function render(targetCtx, w, h, scale) {
       const sy = yt * persp + cy;
 
       // Cull off-screen
-      if (sx < -10 || sx > w + 10 || sy < -10 || sy > h + 10) continue;
+      if (sx < -10 || sx > frameW + 10 || sy < -10 || sy > frameH + 10) continue;
 
       // --- Brightness ---
       // zUnit is roughly [-1, 1]. Map to [0, 1] (peak = 1, valley = 0).
@@ -667,9 +732,9 @@ function render(targetCtx, w, h, scale) {
       // Apply general brightness
       bright *= p.brightness;
 
-      // Vignette: distance from screen center, normalized 0..1
-      const dxn = (sx - halfW) / halfW;
-      const dyn = (sy - halfH) / halfH;
+      // Vignette: distance from the active output boundary, normalized 0..1.
+      const dxn = (sx - edgeCx) / edgeHalfW;
+      const dyn = (sy - edgeCy) / edgeHalfH;
       const distNorm = Math.sqrt(dxn * dxn + dyn * dyn);
       const vEnd = p.edgeStart + p.edgeFalloff;
       const vig = 1 - smoothstep(p.edgeStart, vEnd, distNorm) * p.edge;
@@ -704,11 +769,11 @@ function render(targetCtx, w, h, scale) {
 
       if (p.softEdges) {
         targetCtx.beginPath();
-        targetCtx.arc(sx, sy, size, 0, Math.PI * 2);
+        targetCtx.arc(sx * outputScaleX, sy * outputScaleY, size * outputScale, 0, Math.PI * 2);
         targetCtx.fill();
       } else {
-        const s2 = size;
-        targetCtx.fillRect(sx - s2, sy - s2, s2 * 2, s2 * 2);
+        const s2 = size * outputScale;
+        targetCtx.fillRect(sx * outputScaleX - s2, sy * outputScaleY - s2, s2 * 2, s2 * 2);
       }
     }
   }
@@ -723,7 +788,9 @@ function frame(now) {
     dirty = true;
   }
   if (dirty) {
-    render(ctx, canvas.width, canvas.height, canvas.width / window.innerWidth);
+    const scale = canvas.width / window.innerWidth;
+    const vignetteRect = viewMode === 'mobile' ? getMobileCropRect(canvas.width, canvas.height) : null;
+    render(ctx, canvas.width, canvas.height, scale, vignetteRect);
     dirty = false;
   }
   requestAnimationFrame(frame);
@@ -844,6 +911,10 @@ function bind() {
     lastFrame = performance.now();
   });
 
+  viewModeBtn.addEventListener('click', () => {
+    setViewMode(viewMode === 'mobile' ? 'desktop' : 'mobile');
+  });
+
   document.getElementById('export').addEventListener('click', exportPNG);
 
   document.querySelectorAll('.view-btn').forEach(btn => {
@@ -876,17 +947,39 @@ function bind() {
 // ---------- Export ----------
 function exportPNG() {
   const mult = parseInt(document.getElementById('exportRes').value, 10) || 1;
-  const w = window.innerWidth * mult;
-  const h = window.innerHeight * mult;
-  const off = document.createElement('canvas');
-  off.width = w; off.height = h;
-  const octx = off.getContext('2d');
-  render(octx, w, h, mult);
-  off.toBlob((blob) => {
+  const frameW = canvas.width;
+  const frameH = canvas.height;
+  const frameScale = canvas.width / window.innerWidth;
+  const w = Math.floor(window.innerWidth * mult);
+  const h = Math.floor(window.innerHeight * mult);
+  const outputScaleX = w / frameW;
+  const outputScaleY = h / frameH;
+  const source = document.createElement('canvas');
+  source.width = w; source.height = h;
+  const sourceCtx = source.getContext('2d');
+  const crop = viewMode === 'mobile' ? getMobileCropRect(frameW, frameH) : null;
+  render(sourceCtx, w, h, frameScale, crop, { w: frameW, h: frameH });
+
+  let output = source;
+  if (crop) {
+    const outputCrop = {
+      x: Math.floor(crop.x * outputScaleX),
+      y: Math.floor(crop.y * outputScaleY),
+      w: Math.floor(crop.w * outputScaleX),
+      h: Math.floor(crop.h * outputScaleY),
+    };
+    output = document.createElement('canvas');
+    output.width = outputCrop.w;
+    output.height = outputCrop.h;
+    const outputCtx = output.getContext('2d');
+    outputCtx.drawImage(source, outputCrop.x, outputCrop.y, outputCrop.w, outputCrop.h, 0, 0, outputCrop.w, outputCrop.h);
+  }
+
+  output.toBlob((blob) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `point-cloud-${Date.now()}.png`;
+    a.download = `point-cloud-${viewMode}-${Date.now()}.png`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }, 'image/png');
@@ -915,6 +1008,7 @@ window.addEventListener('keydown', (e) => {
 resize();
 syncUIFromParams();
 bind();
+setViewMode('desktop');
 isPlaying = false; // start static (speed = 0 anyway)
 document.getElementById('play').textContent = 'Play';
 requestAnimationFrame(frame);
