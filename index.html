@@ -13,8 +13,8 @@
   }
   #canvas { display: block; width: 100vw; height: 100vh; }
   body.mobile-view {
-    --mobile-crop-x: max(0px, calc((100vw - 56.25vh) / 2));
-    --mobile-crop-y: max(0px, calc((100vh - 177.7778vw) / 2));
+    --mobile-crop-x: max(0px, calc((100vw - 46.1538vh) / 2));
+    --mobile-crop-y: max(0px, calc((100vh - 216.6667vw) / 2));
   }
   body.mobile-view #canvas {
     clip-path: inset(var(--mobile-crop-y) var(--mobile-crop-x));
@@ -597,7 +597,7 @@ function resize() {
 window.addEventListener('resize', resize);
 
 function getMobileCropRect(w, h) {
-  const phoneAspect = 9 / 16;
+  const phoneAspect = 9 / 19.5;
   let cropW = h * phoneAspect;
   let cropH = h;
   if (cropW > w) {
