@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Point Cloud Visualizer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%; overflow: hidden;
+    background: #000; color: #ddd;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  #canvas { display: block; width: 100vw; height: 100vh; }
+
+  #panel {
+    position: fixed; top: 16px; right: 16px;
+    width: 300px; max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    background: rgba(18, 18, 20, 0.88);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 12px;
+    z-index: 10;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  #panel::-webkit-scrollbar { width: 6px; }
+  #panel::-webkit-scrollbar-track { background: transparent; }
+  #panel::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+  h1 {
+    font-size: 13px; font-weight: 600;
+    margin-bottom: 12px; letter-spacing: 0.5px;
+    color: #fff; text-transform: uppercase;
+  }
+
+  details {
+    margin-bottom: 8px;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  details[open] { background: rgba(255,255,255,0.02); }
+  summary {
+    cursor: pointer; font-weight: 500;
+    padding: 8px 10px;
+    color: #eee;
+    user-select: none;
+    list-style: none;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before {
+    content: '▸'; display: inline-block; margin-right: 6px;
+    transition: transform 0.15s; font-size: 9px; color: #888;
+  }
+  details[open] summary::before { transform: rotate(90deg); }
+
+  .group { padding: 4px 10px 10px; }
+
+  .ctrl { margin-bottom: 8px; }
+  .ctrl label {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 3px; color: #aaa; font-size: 11px;
+  }
+  .ctrl label .val {
+    color: #fff; font-variant-numeric: tabular-nums;
+    font-size: 10px; opacity: 0.8;
+  }
+  .ctrl input[type=range] {
+    width: 100%; height: 4px;
+    -webkit-appearance: none; appearance: none;
+    background: #2a2a2a; border-radius: 2px; outline: none;
+    cursor: pointer;
+  }
+  .ctrl input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 12px; height: 12px;
+    background: #fff; border-radius: 50%;
+    cursor: pointer;
+  }
+  .ctrl input[type=color] {
+    width: 100%; height: 28px;
+    background: #111; border: 1px solid #2a2a2a;
+    border-radius: 4px; cursor: pointer;
+  }
+  .ctrl input[type=number], .ctrl select {
+    width: 100%; background: #111; color: #ddd;
+    border: 1px solid #2a2a2a; padding: 5px 7px;
+    border-radius: 4px; font-size: 11px; outline: none;
+    font-family: inherit;
+  }
+  .ctrl select { cursor: pointer; }
+  .row { display: flex; gap: 6px; }
+  .row > * { flex: 1; }
+
+  button {
+    background: #1f1f22; color: #ddd;
+    border: 1px solid #333; padding: 6px 10px;
+    border-radius: 4px; cursor: pointer; font-size: 11px;
+    font-family: inherit; width: 100%;
+    transition: background 0.1s;
+  }
+  button:hover { background: #2a2a2e; border-color: #444; }
+  button.primary { background: #fff; color: #000; border-color: #fff; }
+  button.primary:hover { background: #ddd; }
+
+  .check {
+    display: flex; align-items: center; gap: 6px;
+    cursor: pointer; color: #aaa; font-size: 11px;
+    margin-bottom: 6px;
+  }
+  .check input { cursor: pointer; }
+
+  .hint {
+    color: #666; font-size: 10px;
+    padding: 6px 10px; border-top: 1px solid rgba(255,255,255,0.05);
+    margin-top: 4px;
+  }
+
+  #toggle-panel {
+    position: fixed; top: 16px; right: 16px;
+    width: 32px; height: 32px;
+    background: rgba(18,18,20,0.88); backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    color: #ddd; cursor: pointer; z-index: 11;
+    display: none; align-items: center; justify-content: center;
+    font-size: 16px;
+  }
+  #toggle-panel.show { display: flex; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<button id="toggle-panel" title="Show panel">≡</button>
+
+<div id="panel">
+  <h1>Point Cloud Visualizer</h1>
+
+  <details open>
+    <summary>Wave Surface</summary>
+    <div class="group">
+      <div class="ctrl"><label>Point Density <span class="val" id="v-density"></span></label>
+        <input type="range" id="density" min="20" max="600" step="1"></div>
+      <div class="ctrl"><label>Wave Amplitude <span class="val" id="v-amplitude"></span></label>
+        <input type="range" id="amplitude" min="0" max="5" step="0.01"></div>
+      <div class="ctrl"><label>Wave Frequency <span class="val" id="v-frequency"></span></label>
+        <input type="range" id="frequency" min="0.005" max="0.15" step="0.001"></div>
+      <div class="ctrl"><label>Wave Directions <span class="val" id="v-directions"></span></label>
+        <input type="range" id="directions" min="1" max="6" step="1"></div>
+      <div class="ctrl"><label>Spread Angle <span class="val" id="v-spread"></span></label>
+        <input type="range" id="spread" min="0" max="3.14" step="0.01"></div>
+      <div class="ctrl"><label>Cloth Warp <span class="val" id="v-warp"></span></label>
+        <input type="range" id="warp" min="0" max="3" step="0.01"></div>
+      <div class="ctrl"><label>Warp Scale <span class="val" id="v-warpScale"></span></label>
+        <input type="range" id="warpScale" min="0.2" max="4" step="0.01"></div>
+      <div class="ctrl"><label>Warp Complexity <span class="val" id="v-warpDetail"></span></label>
+        <input type="range" id="warpDetail" min="1" max="5" step="1"></div>
+      <div class="ctrl"><label>Warp Angle <span class="val" id="v-warpAngle"></span></label>
+        <input type="range" id="warpAngle" min="0" max="6.28" step="0.01"></div>
+      <div class="ctrl"><label>Warp Anisotropy <span class="val" id="v-warpAnisotropy"></span></label>
+        <input type="range" id="warpAnisotropy" min="0" max="1" step="0.01"></div>
+      <div class="ctrl"><label>Ridge Sharpness <span class="val" id="v-ridge"></span></label>
+        <input type="range" id="ridge" min="0" max="1" step="0.01"></div>
+      <div class="ctrl"><label>Valley/Peak Contrast <span class="val" id="v-contrast"></span></label>
+        <input type="range" id="contrast" min="0.2" max="3" step="0.01"></div>
+    </div>
+  </details>
+
+  <details open>
+    <summary>Points</summary>
+    <div class="group">
+      <div class="ctrl"><label>General Brightness <span class="val" id="v-brightness"></span></label>
+        <input type="range" id="brightness" min="0" max="2" step="0.01"></div>
+      <div class="ctrl"><label>Brightness Variation <span class="val" id="v-variation"></span></label>
+        <input type="range" id="variation" min="0" max="1" step="0.01"></div>
+      <div class="ctrl"><label>Empty Space <span class="val" id="v-empty"></span></label>
+        <input type="range" id="empty" min="0" max="0.95" step="0.01"></div>
+      <div class="ctrl"><label>Point Size <span class="val" id="v-pointSize"></span></label>
+        <input type="range" id="pointSize" min="0.2" max="5" step="0.05"></div>
+      <div class="ctrl"><label>Size Variation <span class="val" id="v-sizeVar"></span></label>
+        <input type="range" id="sizeVar" min="0" max="1" step="0.01"></div>
+      <div class="ctrl"><label>Elevation Size Boost <span class="val" id="v-peakSize"></span></label>
+        <input type="range" id="peakSize" min="0" max="3" step="0.01"></div>
+      <label class="check"><input type="checkbox" id="softEdges"> Soft (anti-aliased) dots</label>
+    </div>
+  </details>
+
+  <details open>
+    <summary>Edge / Vignette</summary>
+    <div class="group">
+      <div class="ctrl"><label>Edge Darkness <span class="val" id="v-edge"></span></label>
+        <input type="range" id="edge" min="0" max="1" step="0.01"></div>
+      <div class="ctrl"><label>Vignette Start <span class="val" id="v-edgeStart"></span></label>
+        <input type="range" id="edgeStart" min="0" max="1" step="0.01"></div>
+      <div class="ctrl"><label>Vignette Falloff <span class="val" id="v-edgeFalloff"></span></label>
+        <input type="range" id="edgeFalloff" min="0.5" max="3" step="0.01"></div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Camera</summary>
+    <div class="group">
+      <div class="ctrl"><label>View</label>
+        <div class="row">
+          <button class="view-btn" data-view="headOn">Head-On</button>
+          <button class="view-btn" data-view="tilted">Tilted</button>
+          <button class="view-btn" data-view="low">Low Angle</button>
+        </div>
+      </div>
+      <div class="ctrl"><label>Tilt (Pitch) <span class="val" id="v-tilt"></span></label>
+        <input type="range" id="tilt" min="0" max="1.5" step="0.01"></div>
+      <div class="ctrl"><label>Rotation (Yaw) <span class="val" id="v-rotation"></span></label>
+        <input type="range" id="rotation" min="-1.57" max="1.57" step="0.01"></div>
+      <div class="ctrl"><label>Perspective <span class="val" id="v-perspective"></span></label>
+        <input type="range" id="perspective" min="0" max="6" step="0.05"></div>
+      <div class="ctrl"><label>Zoom <span class="val" id="v-zoom"></span></label>
+        <input type="range" id="zoom" min="0.3" max="3" step="0.01"></div>
+      <div class="ctrl"><label>Pan X <span class="val" id="v-panX"></span></label>
+        <input type="range" id="panX" min="-1" max="1" step="0.01"></div>
+      <div class="ctrl"><label>Pan Y <span class="val" id="v-panY"></span></label>
+        <input type="range" id="panY" min="-1" max="1" step="0.01"></div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Color</summary>
+    <div class="group">
+      <label class="check"><input type="checkbox" id="monochrome" checked> Monochrome</label>
+      <div class="ctrl"><label>Dot Color</label>
+        <input type="color" id="color" value="#ffffff"></div>
+      <div class="ctrl"><label>Background</label>
+        <input type="color" id="bgColor" value="#000000"></div>
+      <div class="ctrl"><label>Hue Shift by Height <span class="val" id="v-hueShift"></span></label>
+        <input type="range" id="hueShift" min="0" max="180" step="1"></div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Animation</summary>
+    <div class="group">
+      <div class="ctrl"><label>Wave Speed <span class="val" id="v-speed"></span></label>
+        <input type="range" id="speed" min="0" max="2" step="0.01"></div>
+      <div class="ctrl"><label>Flow Direction <span class="val" id="v-flowDir"></span></label>
+        <input type="range" id="flowDir" min="-3.14" max="3.14" step="0.01"></div>
+      <button id="play">Pause</button>
+    </div>
+  </details>
+
+  <details open>
+    <summary>Seed</summary>
+    <div class="group">
+      <div class="ctrl">
+        <label>Random Seed</label>
+        <div class="row">
+          <input type="number" id="seed" min="0" step="1">
+          <button id="randomize" style="flex: 0 0 auto; padding: 5px 10px;">⟲</button>
+        </div>
+      </div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Presets &amp; Export</summary>
+    <div class="group">
+      <div class="ctrl"><label>Preset</label>
+        <select id="preset">
+          <option value="example">Original Example</option>
+          <option value="landscape">Landscape (mountains)</option>
+          <option value="dense">Dense Soft Wave</option>
+          <option value="sparse">Sparse Stars</option>
+          <option value="aurora">Aurora (color)</option>
+          <option value="topo">Topographic Ridges</option>
+        </select>
+      </div>
+      <button id="reset">Reset to Default</button>
+      <div style="height:6px"></div>
+      <button id="export" class="primary">Export PNG</button>
+      <div class="ctrl" style="margin-top:8px"><label>Export Resolution</label>
+        <select id="exportRes">
+          <option value="1">Current (1×)</option>
+          <option value="2" selected>2× (Retina)</option>
+          <option value="3">3×</option>
+          <option value="4">4K-ish (4×)</option>
+        </select>
+      </div>
+    </div>
+  </details>
+
+  <div class="hint">Tip: H to hide panel · S to save PNG</div>
+</div>
+
+<script>
+'use strict';
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const panel = document.getElementById('panel');
+const togglePanelBtn = document.getElementById('toggle-panel');
+
+// ---------- Default parameters tuned to the example image ----------
+const DEFAULTS = {
+  // Wave
+  density: 280,
+  amplitude: 1.4,
+  frequency: 0.012,
+  directions: 2,
+  spread: 0.7,
+  warp: 0.4,
+  warpScale: 1.0,
+  warpDetail: 2,
+  warpAngle: 0,
+  warpAnisotropy: 0,
+  ridge: 0.0,
+  contrast: 2.8,
+  // Points
+  brightness: 1.1,
+  variation: 0.22,
+  empty: 0.0,
+  pointSize: 0.5,
+  sizeVar: 0.25,
+  peakSize: 1.0,
+  softEdges: true,
+  // Edge
+  edge: 1.0,
+  edgeStart: 0.1,
+  edgeFalloff: 1.0,
+  // Camera (head-on view)
+  tilt: 0,
+  rotation: 0,
+  perspective: 0.6,
+  zoom: 1.5,
+  panX: 0,
+  panY: 0,
+  // Color
+  monochrome: true,
+  color: '#ffffff',
+  bgColor: '#000000',
+  hueShift: 0,
+  // Animation
+  speed: 0.0,
+  flowDir: 0.6,
+  // Seed
+  seed: 12345,
+};
+
+const PRESETS = {
+  example: { ...DEFAULTS },
+  dense: {
+    ...DEFAULTS,
+    density: 320, amplitude: 1.0, frequency: 0.016,
+    directions: 2, spread: 0.6, warp: 0.25, ridge: 0,
+    contrast: 1.4, pointSize: 0.5, brightness: 0.9, variation: 0.2,
+  },
+  sparse: {
+    ...DEFAULTS,
+    density: 130, amplitude: 2.0, empty: 0.35, pointSize: 1.4,
+    directions: 2, spread: 1.0, warp: 0.4,
+    contrast: 2.0, brightness: 1.1,
+  },
+  aurora: {
+    ...DEFAULTS,
+    monochrome: false, color: '#7fd0ff', bgColor: '#02040a',
+    hueShift: 90, brightness: 1.0, amplitude: 1.6,
+    directions: 4, spread: 1.8, warp: 0.6,
+  },
+  topo: {
+    ...DEFAULTS,
+    density: 220, amplitude: 2.2, frequency: 0.022,
+    directions: 1, spread: 0, warp: 0.9,
+    ridge: 0.55, contrast: 2.4,
+    pointSize: 0.7, variation: 0.15, empty: 0.05,
+    tilt: 0.4, perspective: 0.4,
+  },
+  landscape: {
+    ...DEFAULTS,
+    density: 280, amplitude: 1.6, frequency: 0.013,
+    directions: 4, spread: 2.4, warp: 0.75,
+    ridge: 0.2, contrast: 2.2, brightness: 1.0,
+    tilt: 0.95, rotation: 0.3,
+  },
+};
+
+let params = { ...DEFAULTS };
+let animTime = 0;
+let lastFrame = performance.now();
+let isPlaying = true;
+let dirty = true;
+
+// ---------- Hash / pseudo-random ----------
+function hash2(x, y, seed) {
+  let h = ((x | 0) * 374761393) ^ ((y | 0) * 668265263) ^ ((seed | 0) * 2147483647);
+  h = (h ^ (h >>> 13)) >>> 0;
+  h = Math.imul(h, 1274126177) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 4294967295;
+}
+
+function smoothstep(a, b, x) {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
+// ---------- Wave field ----------
+// 2D value noise with smoothstep interpolation.
+function valueNoise2D(x, y, seed) {
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf);
+  const v = yf * yf * (3 - 2 * yf);
+  const n00 = hash2(xi,     yi,     seed);
+  const n10 = hash2(xi + 1, yi,     seed);
+  const n01 = hash2(xi,     yi + 1, seed);
+  const n11 = hash2(xi + 1, yi + 1, seed);
+  const a = n00 * (1 - u) + n10 * u;
+  const b = n01 * (1 - u) + n11 * u;
+  return a * (1 - v) + b * v; // [0, 1]
+}
+
+// Fractal Brownian Motion — sum of value noise octaves. Returns ~[-1, 1].
+function fbm2D(x, y, seed, octaves) {
+  let sum = 0, norm = 0, amp = 1, freq = 1;
+  for (let i = 0; i < octaves; i++) {
+    sum += valueNoise2D(x * freq, y * freq, seed + i * 1117) * amp;
+    norm += amp;
+    amp *= 0.5;
+    freq *= 2.05;
+  }
+  return (sum / Math.max(0.0001, norm)) * 2 - 1;
+}
+
+// Wave field: directional sine waves with broad cloth-like domain warping.
+//   directions: number of overlapping sine wave directions (1..N)
+//   spread:     angular fan of directions (radians). 0 = parallel, π = full.
+//   ridge:      0 = smooth sines, 1 = sharp ridges (|sin| inverted)
+//   warp:       0 = clean repeating waves, 1 = bulges shifted around like
+//               draped cloth. Warp is large-scale (not fine-grained noise),
+//               so wave shapes are preserved but pushed around.
+function waveHeight(x, y, t, seed, p) {
+  // --- Cloth-like domain warp ---
+  // Iterative warp: each pass distorts the input coords using the *previous*
+  // pass's warped coords, giving a draping/folding feel rather than a uniform
+  // shift. Higher passes use higher freq + lower amp (fractal cascade).
+  if (p.warp > 0) {
+    const wavelen = 1 / Math.max(0.001, p.frequency);
+    // warpScale > 1 = broader/larger warp features; < 1 = tighter folds
+    const baseFreq = p.frequency * 0.18 / Math.max(0.05, p.warpScale);
+    const baseAmt = wavelen * p.warp * 2.5;
+    const passes = Math.max(1, p.warpDetail | 0);
+
+    const cosA = Math.cos(p.warpAngle);
+    const sinA = Math.sin(p.warpAngle);
+    const aniso = p.warpAnisotropy;
+
+    let xw = x, yw = y;
+    let freq = baseFreq;
+    let amp = baseAmt;
+
+    for (let i = 0; i < passes; i++) {
+      // Per-pass offsets keep noise from coinciding across passes
+      const ox1 = 31.7 + i * 17.3, oy1 = 11.3 + i * 23.7;
+      const ox2 = 71.1 + i * 19.9, oy2 = 43.9 + i * 29.1;
+      const sa = seed + 7 + i * 53;
+      const sb = seed + 13 + i * 61;
+
+      let dx = (valueNoise2D(xw * freq + ox1, yw * freq + oy1, sa) - 0.5) * 2;
+      let dy = (valueNoise2D(xw * freq + ox2, yw * freq + oy2, sb) - 0.5) * 2;
+
+      // Anisotropy: squash the displacement component perpendicular to warpAngle.
+      // At aniso=1 the warp only acts along the chosen direction (creates rolling
+      // ridges or directional folds).
+      if (aniso > 0) {
+        const along = dx * cosA + dy * sinA;
+        const perp = -dx * sinA + dy * cosA;
+        const newPerp = perp * (1 - aniso);
+        dx = along * cosA - newPerp * sinA;
+        dy = along * sinA + newPerp * cosA;
+      }
+
+      xw += dx * amp;
+      yw += dy * amp;
+
+      freq *= 2.0;
+      amp *= 0.5;
+    }
+
+    x = xw;
+    y = yw;
+  }
+
+  // --- Directional sine layers (the wave shapes themselves stay smooth) ---
+  let z = 0;
+  let weightSum = 0;
+  const dirCount = Math.max(1, p.directions | 0);
+  const baseAngle = hash2(99, seed, 1) * Math.PI * 2;
+  let weight = 1;
+  for (let i = 0; i < dirCount; i++) {
+    const off = dirCount === 1 ? 0 : (i / (dirCount - 1) - 0.5) * p.spread;
+    const jitter = (hash2(i, seed, 333) - 0.5) * 0.25;
+    const angle = baseAngle + off + jitter;
+    const phase = hash2(i + 1, seed, 6151) * Math.PI * 2;
+    const dx = Math.cos(angle), dy = Math.sin(angle);
+    const fMul = 0.85 + hash2(i, seed, 991) * 0.4;
+    const f = p.frequency * fMul;
+    let s = Math.sin((dx * x + dy * y) * f + phase + t * (0.5 + i * 0.13));
+    if (p.ridge > 0) {
+      const rg = 1 - 2 * Math.abs(s);
+      s = s * (1 - p.ridge) + rg * p.ridge;
+    }
+    z += s * weight;
+    weightSum += weight;
+    weight *= 0.85;
+  }
+
+  return (z / Math.max(0.0001, weightSum)) * p.amplitude;
+}
+
+// ---------- Color helpers ----------
+function hexToRgb(hex) {
+  const v = parseInt(hex.slice(1), 16);
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+function hslToRgb(h, s, l) {
+  h /= 360;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => {
+    const k = (n + h * 12) % 12;
+    return l - a * Math.max(-1, Math.min(Math.min(k - 3, 9 - k), 1));
+  };
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+}
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  let h, s, l = (mx + mn) / 2;
+  if (mx === mn) { h = s = 0; }
+  else {
+    const d = mx - mn;
+    s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    switch (mx) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h *= 60;
+  }
+  return [h, s, l];
+}
+
+// ---------- Resize ----------
+function resize() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.floor(window.innerWidth * dpr);
+  canvas.height = Math.floor(window.innerHeight * dpr);
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  dirty = true;
+}
+window.addEventListener('resize', resize);
+
+// ---------- Render ----------
+function render(targetCtx, w, h, scale) {
+  scale = scale || 1;
+  const p = params;
+
+  // Background
+  targetCtx.fillStyle = p.bgColor;
+  targetCtx.fillRect(0, 0, w, h);
+
+  const halfW = w / 2, halfH = h / 2;
+  const cx = halfW + p.panX * halfW;
+  const cy = halfH + p.panY * halfH;
+
+  const cosT = Math.cos(p.tilt), sinT = Math.sin(p.tilt);
+  const cosR = Math.cos(p.rotation), sinR = Math.sin(p.rotation);
+
+  // Work in pixel space. Focal length controls perspective strength.
+  const focalLength = 1200 * scale;
+
+  // Grid extends well beyond the viewport so rotation + tilt still fill the frame.
+  // Diagonal × generous factor.
+  const diag = Math.hypot(w, h);
+  const baseExtent = diag * 1.6 / p.zoom;
+  const stepCount = Math.max(10, Math.floor(p.density));
+  const stepSize = baseExtent / stepCount;
+  const halfSpan = baseExtent / 2;
+  // Y axis needs much larger extent because tilt foreshortens it
+  const yExtent = baseExtent * (1.2 + p.tilt * 1.4);
+  const yHalf = yExtent / 2;
+  const ySteps = Math.max(10, Math.floor(yExtent / stepSize));
+
+  // Amplitude → pixels: ties wave height to viewport so it scales with window.
+  const ampPx = (diag / 12) * p.amplitude;
+  // Perspective z-scale: how much zt shifts perspective (px units)
+  const perspZScale = 1.0;
+
+  const baseColor = hexToRgb(p.color);
+  const baseHsl = rgbToHsl(baseColor[0], baseColor[1], baseColor[2]);
+
+  const flowX = Math.cos(p.flowDir);
+  const flowY = Math.sin(p.flowDir);
+
+  const t = animTime;
+
+  for (let iy = 0; iy < ySteps; iy++) {
+    const y0 = -yHalf + iy * stepSize;
+    for (let ix = 0; ix < stepCount; ix++) {
+      const x0 = -halfSpan + ix * stepSize;
+
+      // Per-grid-point pseudo-random
+      const h1 = hash2(ix, iy, p.seed);
+      if (h1 < p.empty) continue;
+      const h2 = hash2(ix + 9871, iy + 1373, p.seed);
+
+      // Slight jitter so grid doesn't look gridded — small to preserve row pattern
+      const jx = (h1 - 0.5) * stepSize * 0.15;
+      const jy = (h2 - 0.5) * stepSize * 0.15;
+
+      const X = x0 + jx;
+      const Y = y0 + jy;
+
+      // Wave: input coords flow with time in flow direction
+      const wx = X + flowX * t * 80;
+      const wy = Y + flowY * t * 80;
+      const zUnit = waveHeight(wx, wy, 0, p.seed, p);
+      const Z = zUnit * ampPx;
+
+      // Yaw rotation (around vertical / Z axis in screen-plane sense)
+      const xr = X * cosR - Y * sinR;
+      const yr = X * sinR + Y * cosR;
+
+      // Pitch / tilt: rotate around horizontal axis so we look down at surface.
+      // Depth axis (zt) is negated so wave peaks (Z>0) and screen-foreground (+yr)
+      // are CLOSER to camera and appear larger under perspective.
+      const yt = yr * cosT - Z * sinT;
+      const zt = -yr * sinT - Z * cosT;
+
+      // Perspective
+      const perspDenom = focalLength + zt * perspZScale * p.perspective;
+      if (perspDenom <= 1) continue;
+      const persp = focalLength / perspDenom;
+
+      const sx = xr * persp + cx;
+      const sy = yt * persp + cy;
+
+      // Cull off-screen
+      if (sx < -10 || sx > w + 10 || sy < -10 || sy > h + 10) continue;
+
+      // --- Brightness ---
+      // zUnit is roughly [-1, 1]. Map to [0, 1] (peak = 1, valley = 0).
+      const zNorm = Math.max(0, Math.min(1, zUnit * 0.5 + 0.5));
+
+      // Apply contrast (gamma curve)
+      const contrastG = 1 / Math.max(0.05, p.contrast);
+      let bright = Math.pow(zNorm, contrastG);
+
+      // Random per-dot variation
+      bright += (h2 - 0.5) * 2 * p.variation * 0.5;
+
+      // Apply general brightness
+      bright *= p.brightness;
+
+      // Vignette: distance from screen center, normalized 0..1
+      const dxn = (sx - halfW) / halfW;
+      const dyn = (sy - halfH) / halfH;
+      const distNorm = Math.sqrt(dxn * dxn + dyn * dyn);
+      const vEnd = p.edgeStart + p.edgeFalloff;
+      const vig = 1 - smoothstep(p.edgeStart, vEnd, distNorm) * p.edge;
+      bright *= vig;
+
+      bright = Math.max(0, Math.min(1, bright));
+      if (bright <= 0.01) continue;
+
+      // --- Size ---
+      const sizeVarFactor = 1 + (h1 - 0.5) * 2 * p.sizeVar;
+      const peakBoost = 1 + zNorm * p.peakSize;
+      let size = p.pointSize * persp * sizeVarFactor * peakBoost * scale;
+      if (size < 0.3 * scale) size = 0.3 * scale;
+
+      // --- Color ---
+      let r, g, b;
+      if (p.monochrome) {
+        r = baseColor[0]; g = baseColor[1]; b = baseColor[2];
+      } else {
+        // Hue shift based on height
+        const hue = (baseHsl[0] + (zNorm - 0.5) * p.hueShift + 360) % 360;
+        const rgb = hslToRgb(hue, baseHsl[1], baseHsl[2]);
+        r = rgb[0]; g = rgb[1]; b = rgb[2];
+      }
+
+      // Multiply color by brightness (so dark dots aren't just transparent — they stay dim)
+      const fr = Math.round(r * bright);
+      const fg = Math.round(g * bright);
+      const fb = Math.round(b * bright);
+
+      targetCtx.fillStyle = `rgb(${fr},${fg},${fb})`;
+
+      if (p.softEdges) {
+        targetCtx.beginPath();
+        targetCtx.arc(sx, sy, size, 0, Math.PI * 2);
+        targetCtx.fill();
+      } else {
+        const s2 = size;
+        targetCtx.fillRect(sx - s2, sy - s2, s2 * 2, s2 * 2);
+      }
+    }
+  }
+}
+
+// ---------- Main loop ----------
+function frame(now) {
+  const dt = Math.min(0.1, (now - lastFrame) / 1000);
+  lastFrame = now;
+  if (isPlaying && params.speed > 0) {
+    animTime += dt * params.speed;
+    dirty = true;
+  }
+  if (dirty) {
+    render(ctx, canvas.width, canvas.height, canvas.width / window.innerWidth);
+    dirty = false;
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---------- Controls wiring ----------
+const sliderIds = [
+  'density','amplitude','frequency','directions','spread',
+  'warp','warpScale','warpDetail','warpAngle','warpAnisotropy',
+  'ridge','contrast',
+  'brightness','variation','empty','pointSize','sizeVar','peakSize',
+  'edge','edgeStart','edgeFalloff',
+  'tilt','rotation','perspective','zoom','panX','panY',
+  'hueShift','speed','flowDir',
+];
+const numberIds = ['seed'];
+const colorIds = ['color','bgColor'];
+const checkIds = ['monochrome','softEdges'];
+
+function syncUIFromParams() {
+  for (const id of sliderIds) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.value = params[id];
+    const v = document.getElementById('v-' + id);
+    if (v) v.textContent = formatVal(id, params[id]);
+  }
+  // Special-cased value labels with different ids
+  const specials = {
+    density: 'density', amplitude: 'amplitude', frequency: 'frequency',
+    directions: 'directions', spread: 'spread',
+    warp: 'warp', warpScale: 'warpScale', warpDetail: 'warpDetail',
+    warpAngle: 'warpAngle', warpAnisotropy: 'warpAnisotropy',
+    ridge: 'ridge', contrast: 'contrast',
+    brightness: 'brightness', variation: 'variation', empty: 'empty',
+    pointSize: 'pointSize', sizeVar: 'sizeVar', peakSize: 'peakSize',
+    edge: 'edge', edgeStart: 'edgeStart', edgeFalloff: 'edgeFalloff',
+    tilt: 'tilt', rotation: 'rotation', perspective: 'perspective',
+    zoom: 'zoom', panX: 'panX', panY: 'panY',
+    hueShift: 'hueShift', speed: 'speed', flowDir: 'flowDir',
+  };
+  for (const [pid, vid] of Object.entries(specials)) {
+    const v = document.getElementById('v-' + vid);
+    if (v) v.textContent = formatVal(pid, params[pid]);
+  }
+  for (const id of numberIds) {
+    const el = document.getElementById(id);
+    if (el) el.value = params[id];
+  }
+  for (const id of colorIds) {
+    const el = document.getElementById(id);
+    if (el) el.value = params[id];
+  }
+  for (const id of checkIds) {
+    const el = document.getElementById(id);
+    if (el) el.checked = params[id];
+  }
+}
+
+function formatVal(id, v) {
+  if (typeof v !== 'number') return String(v);
+  if (id === 'density' || id === 'directions' || id === 'hueShift') return String(v | 0);
+  if (Math.abs(v) >= 10) return v.toFixed(1);
+  return v.toFixed(2);
+}
+
+function bind() {
+  for (const id of sliderIds) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.addEventListener('input', () => {
+      params[id] = parseFloat(el.value);
+      const v = document.getElementById('v-' + id);
+      if (v) v.textContent = formatVal(id, params[id]);
+      dirty = true;
+    });
+  }
+  for (const id of numberIds) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.addEventListener('input', () => {
+      const n = parseInt(el.value, 10);
+      if (!isNaN(n)) { params[id] = n; dirty = true; }
+    });
+  }
+  for (const id of colorIds) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.addEventListener('input', () => { params[id] = el.value; dirty = true; });
+  }
+  for (const id of checkIds) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.addEventListener('change', () => { params[id] = el.checked; dirty = true; });
+  }
+
+  document.getElementById('randomize').addEventListener('click', () => {
+    params.seed = Math.floor(Math.random() * 1000000);
+    document.getElementById('seed').value = params.seed;
+    dirty = true;
+  });
+
+  document.getElementById('reset').addEventListener('click', () => {
+    params = { ...DEFAULTS };
+    syncUIFromParams();
+    dirty = true;
+  });
+
+  document.getElementById('preset').addEventListener('change', (e) => {
+    const p = PRESETS[e.target.value];
+    if (p) { params = { ...p }; syncUIFromParams(); dirty = true; }
+  });
+
+  const playBtn = document.getElementById('play');
+  playBtn.addEventListener('click', () => {
+    isPlaying = !isPlaying;
+    playBtn.textContent = isPlaying ? 'Pause' : 'Play';
+    lastFrame = performance.now();
+  });
+
+  document.getElementById('export').addEventListener('click', exportPNG);
+
+  document.querySelectorAll('.view-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const v = btn.dataset.view;
+      if (v === 'headOn') {
+        // Look straight down at the wave plane (perpendicular to surface)
+        params.tilt = 0;
+        params.rotation = 0;
+        params.perspective = 0.6;
+        params.panY = 0;
+      } else if (v === 'tilted') {
+        params.tilt = 1.05;
+        params.rotation = 0.35;
+        params.perspective = 1.0;
+        params.panY = -0.05;
+      } else if (v === 'low') {
+        // Closer to edge-on for a dramatic side view
+        params.tilt = 1.4;
+        params.rotation = 0.2;
+        params.perspective = 1.2;
+        params.panY = -0.15;
+      }
+      syncUIFromParams();
+      dirty = true;
+    });
+  });
+}
+
+// ---------- Export ----------
+function exportPNG() {
+  const mult = parseInt(document.getElementById('exportRes').value, 10) || 1;
+  const w = window.innerWidth * mult;
+  const h = window.innerHeight * mult;
+  const off = document.createElement('canvas');
+  off.width = w; off.height = h;
+  const octx = off.getContext('2d');
+  render(octx, w, h, mult);
+  off.toBlob((blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `point-cloud-${Date.now()}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }, 'image/png');
+}
+
+// ---------- Panel toggle ----------
+function setPanelVisible(show) {
+  panel.style.display = show ? 'block' : 'none';
+  togglePanelBtn.classList.toggle('show', !show);
+}
+togglePanelBtn.addEventListener('click', () => setPanelVisible(true));
+
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.key === 'h' || e.key === 'H') {
+    setPanelVisible(panel.style.display === 'none');
+  } else if (e.key === 's' || e.key === 'S') {
+    exportPNG();
+  } else if (e.key === ' ') {
+    document.getElementById('play').click();
+    e.preventDefault();
+  }
+});
+
+// ---------- Init ----------
+resize();
+syncUIFromParams();
+bind();
+isPlaying = false; // start static (speed = 0 anyway)
+document.getElementById('play').textContent = 'Play';
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
