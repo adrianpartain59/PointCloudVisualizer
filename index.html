@@ -300,6 +300,7 @@
         <select id="preset">
           <option value="example">Original Example</option>
           <option value="landscape">Landscape (mountains)</option>
+          <option value="rollingHills">Rolling Hills</option>
           <option value="dense">Dense Soft Wave</option>
           <option value="sparse">Sparse Stars</option>
           <option value="aurora">Aurora (color)</option>
@@ -414,6 +415,20 @@ const PRESETS = {
     directions: 4, spread: 2.4, warp: 0.75,
     ridge: 0.2, contrast: 2.2, brightness: 1.0,
     tilt: 0.95, rotation: 0.3,
+  },
+  rollingHills: {
+    ...DEFAULTS,
+    density: 300, amplitude: 1.2, frequency: 0.01,
+    directions: 2, spread: 2.04, warp: 0,
+    warpScale: 4.0, warpDetail: 1, warpAngle: 0,
+    warpAnisotropy: 1.0, ridge: 0, contrast: 3.0,
+    brightness: 1.88, variation: 0, empty: 0,
+    pointSize: 0.3, sizeVar: 0, peakSize: 2.4,
+    softEdges: true,
+    edge: 0.67, edgeStart: 0.1, edgeFalloff: 1.0,
+    tilt: 0.5,
+    monochrome: true, color: '#ffffff', bgColor: '#000000',
+    hueShift: 0, speed: 1.57, flowDir: 0.6,
   },
 };
 
